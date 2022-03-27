@@ -1,4 +1,6 @@
+from email.policy import default
 import os, sys
+from tkinter.tix import Tree
 import numpy as np
 import imageio
 import json
@@ -16,7 +18,7 @@ from run_nerf_helpers import *
 
 from load_llff import load_llff_data, load_colmap_depth
 from load_dtu import load_dtu_data
-
+from load_scannet_as_llff import load_scannet_data
 from loss import SigmaLoss
 
 
@@ -500,6 +502,7 @@ def config_parser():
                         help='exponential learning rate decay (in 1000 steps)')
     parser.add_argument("--chunk", type=int, default=1024*32, 
                         help='number of rays processed in parallel, decrease if running out of memory')
+    parser.add_argument("--renderchunk", type=int, default=1024*32)
     parser.add_argument("--netchunk", type=int, default=1024*64, 
                         help='number of pts sent through network in parallel, decrease if running out of memory')
     parser.add_argument("--no_batching", action='store_true', 
@@ -549,6 +552,8 @@ def config_parser():
     # dataset options
     parser.add_argument("--dataset_type", type=str, default='llff', 
                         help='options: llff / blender / deepvoxels')
+    parser.add_argument("--dataset_type_add", type=str, default=" ")
+
     parser.add_argument("--testskip", type=int, default=8, 
                         help='will load 1/N images from test/val sets, useful for large datasets like deepvoxels')
 
@@ -620,6 +625,7 @@ def config_parser():
                     help="normalize depth before calculating loss")
     parser.add_argument("--depth_rays_prop", type=float, default=0.5,
                         help="Proportion of depth rays.")
+
     return parser
 
 
@@ -628,8 +634,19 @@ def train():
     parser = config_parser()
     args = parser.parse_args()
 
+    if args.dataset_type == 'llff' and args.dataset_type_add == "scannet":
+        images, poses, bds, depth_gts = load_scannet_data(args.datadir, args.train_scene, with_depth=True)
+        images_test, render_poses, bds = load_scannet_data(args.datadir, args.test_scene)
+        i_test = args.test_scene
+        hwf = poses[0,:3,-1]
+        poses = poses[:,:3,:4]
+        print('Loaded scannet', images.shape, render_poses.shape, hwf, args.datadir)
+        if args.no_ndc:
+            near = np.ndarray.min(bds) * .9
+            far = np.ndarray.max(bds) * 1.
+        print('NEAR FAR', near, far)
 
-    if args.dataset_type == 'llff':
+    elif args.dataset_type == 'llff':
         if args.colmap_depth:
             depth_gts = load_colmap_depth(args.datadir, factor=args.factor, bd_factor=.75)
         images, poses, bds, render_poses, i_test = load_llff_data(args.datadir, args.factor,
@@ -638,6 +655,7 @@ def train():
         hwf = poses[0,:3,-1]
         poses = poses[:,:3,:4]
         print('Loaded llff', images.shape, render_poses.shape, hwf, args.datadir)
+        
         if not isinstance(i_test, list):
             i_test = [i_test]
 
@@ -720,6 +738,14 @@ def train():
         with open(f, 'w') as file:
             file.write(open(args.config, 'r').read())
 
+    if args.dataset_type == 'llff' and args.dataset_type_add == "scannet":
+        i_train = np.linspace(0, len(args.train_scene)-1, len(args.train_scene)-1).astype(np.int).tolist()
+        i_test = i_train
+        i_val = i_train
+    print('Begin')
+    print('TRAIN views are', i_train)
+    print('TEST views are', i_test)
+    print('VAL views are', i_val)
     # Create nerf model
     render_kwargs_train, render_kwargs_test, start, grad_vars, optimizer = create_nerf(args)
 
@@ -841,15 +867,11 @@ def train():
     if use_batching:
         # rays_rgb = torch.Tensor(rays_rgb).to(device)
         # rays_depth = torch.Tensor(rays_depth).to(device) if rays_depth is not None else None
-        raysRGB_iter = iter(DataLoader(RayDataset(rays_rgb), batch_size = N_rgb, shuffle=True, num_workers=0))
-        raysDepth_iter = iter(DataLoader(RayDataset(rays_depth), batch_size = N_depth, shuffle=True, num_workers=0)) if rays_depth is not None else None
+        raysRGB_iter = iter(DataLoader(RayDataset(rays_rgb), batch_size = N_rgb, shuffle=False, num_workers=0))
+        raysDepth_iter = iter(DataLoader(RayDataset(rays_depth), batch_size = N_depth, shuffle=False, num_workers=0)) if rays_depth is not None else None
 
 
     N_iters = args.N_iters + 1
-    print('Begin')
-    print('TRAIN views are', i_train)
-    print('TEST views are', i_test)
-    print('VAL views are', i_val)
 
     # Summary writers
     # writer = SummaryWriter(os.path.join(basedir, 'summaries', expname))
@@ -865,7 +887,7 @@ def train():
             try:
                 batch = next(raysRGB_iter).to(device)
             except StopIteration:
-                raysRGB_iter = iter(DataLoader(RayDataset(rays_rgb), batch_size = N_rgb, shuffle=True, num_workers=0))
+                raysRGB_iter = iter(DataLoader(RayDataset(rays_rgb), batch_size = N_rgb, shuffle=False, num_workers=0))
                 batch = next(raysRGB_iter).to(device)
             batch = torch.transpose(batch, 0, 1)
             batch_rays, target_s = batch[:2], batch[2]
@@ -875,7 +897,7 @@ def train():
                 try:
                     batch_depth = next(raysDepth_iter).to(device)
                 except StopIteration:
-                    raysDepth_iter = iter(DataLoader(RayDataset(rays_depth), batch_size = N_depth, shuffle=True, num_workers=0))
+                    raysDepth_iter = iter(DataLoader(RayDataset(rays_depth), batch_size = N_depth, shuffle=False, num_workers=0))
                     batch_depth = next(raysDepth_iter).to(device)
                 batch_depth = torch.transpose(batch_depth, 0, 1)
                 batch_rays_depth = batch_depth[:2] # 2 x B x 3
@@ -1033,11 +1055,11 @@ def train():
         if args.i_video > 0 and i%args.i_video==0 and i > 0:
             # Turn on testing mode
             with torch.no_grad():
-                rgbs, disps = render_path(render_poses, hwf, args.chunk, render_kwargs_test)
+                rgbs, disps = render_path(render_poses, hwf, args.renderchunk, render_kwargs_test)
             print('Done, saving', rgbs.shape, disps.shape)
             moviebase = os.path.join(basedir, expname, '{}_spiral_{:06d}_'.format(expname, i))
-            imageio.mimwrite(moviebase + 'rgb.mp4', to8b(rgbs), fps=30, quality=8)
-            imageio.mimwrite(moviebase + 'disp.mp4', to8b(disps / np.nanmax(disps)), fps=30, quality=8)
+            imageio.mimwrite(moviebase + 'rgb.mp4', to8b(rgbs), fps=25, quality=8)
+            imageio.mimwrite(moviebase + 'disp.mp4', to8b(disps / np.nanmax(disps)), fps=25, quality=8)
 
 
             # if args.use_viewdirs:

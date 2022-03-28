@@ -5,8 +5,9 @@ from email.mime import base
 from tkinter import image_names
 import numpy as np
 import os, imageio
+import cv2
 
-def load_scannet_data(basedir, index, with_depth=False, image_w=1296, image_h=968, depth_w=640, depth_h=480):
+def load_scannet_data(basedir, index, with_depth=False, image_w=1296, image_h=968, depth_w=640, depth_h=480, factor=1):
     # load pose and 3x5 [R:t:hwf]
     pose_path = os.path.join(basedir, 'pose')
     image_path = os.path.join(basedir, 'color')
@@ -18,6 +19,7 @@ def load_scannet_data(basedir, index, with_depth=False, image_w=1296, image_h=96
     for i, idx in enumerate(index):
         image_filename = os.path.join(image_path, f"{idx}.jpg")
         color = imageio.imread(image_filename)
+        # if not factor == 1:
         images[i,:,:,:] = color.astype(np.float32)/255
 
     for i, idx in enumerate(index):
@@ -36,6 +38,7 @@ def load_scannet_data(basedir, index, with_depth=False, image_w=1296, image_h=96
     # 其中depth w = 640, color w = 1296
     # 将深度认为是深度的一半分辨率
     depth_scale = 2
+    depth_scale = int(depth_scale / factor)
     if with_depth:
         depth_gts = []
         x,y = np.meshgrid(np.linspace(0, depth_h-1, int(depth_h)), np.linspace(0, depth_w-1, int(depth_w)))

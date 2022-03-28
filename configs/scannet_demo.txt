@@ -5,7 +5,7 @@ dataset_type = llff
 dataset_type_add = scannet
 
 factor = 1
-
+render_factor = 8
 N_rand = 1024
 N_samples = 64
 N_importance = 64
@@ -19,7 +19,7 @@ netchunk = 8192
 netdepth = 4
 
 i_testset = 10000
-i_video = 2000
+i_video = 1000
 N_iters = 20000
 
 train_scene = [830,837,848,855,864,870,886,904,913,917,926]

@@ -635,7 +635,7 @@ def train():
     args = parser.parse_args()
 
     if args.dataset_type == 'llff' and args.dataset_type_add == "scannet":
-        images, poses, bds, depth_gts = load_scannet_data(args.datadir, args.train_scene, with_depth=True)
+        images, poses, bds, depth_gts = load_scannet_data(args.datadir, args.train_scene, with_depth=True, factor=args.factor)
         images_test, render_poses, bds = load_scannet_data(args.datadir, args.test_scene)
         i_test = args.test_scene
         hwf = poses[0,:3,-1]
@@ -1055,7 +1055,7 @@ def train():
         if args.i_video > 0 and i%args.i_video==0 and i > 0:
             # Turn on testing mode
             with torch.no_grad():
-                rgbs, disps = render_path(render_poses, hwf, args.renderchunk, render_kwargs_test)
+                rgbs, disps = render_path(render_poses, hwf, args.renderchunk, render_kwargs_test, render_factor=args.render_factor)
             print('Done, saving', rgbs.shape, disps.shape)
             moviebase = os.path.join(basedir, expname, '{}_spiral_{:06d}_'.format(expname, i))
             imageio.mimwrite(moviebase + 'rgb.mp4', to8b(rgbs), fps=25, quality=8)
